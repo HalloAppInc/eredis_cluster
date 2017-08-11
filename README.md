@@ -1,15 +1,15 @@
-# eredis_cluster
-[![Travis](https://img.shields.io/travis/adrienmo/eredis_cluster.svg?branch=master&style=flat-square)](https://travis-ci.org/adrienmo/eredis_cluster)
-[![Hex.pm](https://img.shields.io/hexpm/v/eredis_cluster.svg?style=flat-square)](https://hex.pm/packages/eredis_cluster)
+# eredis_cluster_client
 
 ## Description
 
-eredis_cluster is a wrapper for eredis to support cluster mode of redis 3.0.0+
+eredis_cluster_client provides additional functionality to connect multiple redis clusters in your application. 
 
 ## TODO
 
 - Improve test suite to demonstrate the case where redis cluster is crashing,
-resharding, recovering...
+resharding, recovering.
+- Add existing eredis_cluster query functions to eredis_cluster_client via gen server calls.
+
 
 ## Compilation && Test
 
@@ -18,10 +18,44 @@ The directory contains a Makefile and rebar3
 	make
 	make test
 
-## Configuration
+## eredis_cluster_client Configuration
+To connect multiple redis clusters in your application, you need to start the eredis_cluster_pool supervisor, and multiple  eredis_cluster_client s in your application supervisor as,
 
-To configure the redis cluster, you can use an application variable (probably in
-your app.config):
+    Procs = [{eredis_cluster_pool,
+            {eredis_cluster_pool, start_link, []},
+            permanent, 5000, supervisor, [dynamic]},
+         {eredis_cluster_client_a,
+                {eredis_cluster_client, start_link, [{eredis_cluster_client_a, [{"127.0.0.1",10000},{"127.0.0.1",10001},{"127.0.0.1",10002},{"127.0.0.1",10003},{"127.0.0.1",10004},{"127.0.0.1",10005}]}]},
+                permanent, 5000, worker, [dynamic]},
+        {eredis_cluster_client_b_1,
+            {eredis_cluster_client, start_link, [{eredis_cluster_client_b_1, [{"127.0.0.1",9000},{"127.0.0.1",9001},{"127.0.0.1",9002},{"127.0.0.1",9003},{"127.0.0.1",9004},{"127.0.0.1",9005}]}]},
+            permanent, 5000, worker, [dynamic]},
+        {eredis_cluster_client_b_2,
+            {eredis_cluster_client, start_link, [{eredis_cluster_client_b_2, [{"127.0.0.1",9000},{"127.0.0.1",9001},{"127.0.0.1",9002},{"127.0.0.1",9003},{"127.0.0.1",9004},{"127.0.0.1",9005}]}]},
+            permanent, 5000, worker, [dynamic]}
+        ],
+    {ok, {{one_for_one, 1, 5}, Procs}}.
+
+## Usage
+```erlang
+%% Simple command
+gen_server:call(eredis_cluster_client_a,{q, ["GET","abc"]}).
+
+%% Pipeline
+gen_server:call(eredis_cluster_client_a,{qp, [["LPUSH", "a", "a"], ["LPUSH", "a", "b"], ["LPUSH", "a", "c"]]}).
+
+%% Execute a query on the server containing the key "TEST"
+gen_server:call(eredis_cluster_client_a,{qk, ["FLUSHDB"], "TEST"}).
+
+%% Flush DB
+gen_server:call(eredis_cluster_client_a,{flushdb, ["FLUSHDB"], "TEST"}).
+
+```
+## eredis_cluster Configuration
+
+In addition to connect multiple clusters, you can use the eredis_cluster_client as eredis_cluster if you do not need to connect multiple clusters but you wish to in future.
+
+To configure the redis cluster, you can use an application variable (probably in your app.config):
 
 	{eredis_cluster,
 	    [
