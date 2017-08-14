@@ -14,10 +14,14 @@ resharding, recovering.
 ## Compilation && Test
 
 The directory contains a Makefile and rebar3
-
+#### Make
 	make
 	make test
 
+#### Rebar
+    rebar g-d
+    rebar co
+    
 ## eredis_cluster_client Configuration
 To connect multiple redis clusters in your application, you need to start the eredis_cluster_pool supervisor, and multiple  eredis_cluster_client s in your application supervisor as,
 
