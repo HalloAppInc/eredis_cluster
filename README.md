@@ -53,7 +53,7 @@ gen_server:call(eredis_cluster_client_a,{flushdb, ["FLUSHDB"], "TEST"}).
 ```
 ## eredis_cluster Configuration
 
-In addition to connect multiple clusters, you can use the eredis_cluster_client as eredis_cluster if you do not need to connect multiple clusters but you wish to in future.
+In addition to connect multiple clusters, you can use the eredis_cluster_client as eredis_cluster if you do not need to connect multiple clusters but you wish to integrate it in future.
 
 To configure the redis cluster, you can use an application variable (probably in your app.config):
 
