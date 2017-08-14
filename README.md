@@ -22,7 +22,7 @@ The directory contains a Makefile and rebar3
 To connect multiple redis clusters in your application, you need to start the eredis_cluster_pool supervisor, and multiple  eredis_cluster_client s in your application supervisor as,
 
     Procs = [{eredis_cluster_pool,
-            {eredis_cluster_pool, start_link, []},
+            {eredis_cluster_pool, start_link, [{10, 0}]},
             permanent, 5000, supervisor, [dynamic]},
          {eredis_cluster_client_a,
                 {eredis_cluster_client, start_link, [{eredis_cluster_client_a, [{"127.0.0.1",10000},{"127.0.0.1",10001},{"127.0.0.1",10002},{"127.0.0.1",10003},{"127.0.0.1",10004},{"127.0.0.1",10005}]}]},
