@@ -333,6 +333,10 @@ flushdb() ->
 %% @end
 %% =============================================================================
 -spec get_key_slot(Key::anystring()) -> Slot::integer().
+get_key_slot(Key) when is_float(Key) ->
+    get_key_slot(float_to_list(Key));
+get_key_slot(Key) when is_integer(Key) ->
+    get_key_slot(integer_to_list(Key));
 get_key_slot(Key) when is_bitstring(Key) ->
     get_key_slot(bitstring_to_list(Key));
 get_key_slot(Key) ->
@@ -372,6 +376,10 @@ get_key_slot(Key) ->
 %% @end
 %% =============================================================================
 -spec get_key_from_command(redis_command()) -> string() | undefined.
+get_key_from_command([[X|Y]|Z]) when is_integer(X) ->
+    get_key_from_command([[integer_to_list(X)|Y]|Z]);
+get_key_from_command([[X|Y]|Z]) when is_float(X) ->
+    get_key_from_command([[float_to_list(X)|Y]|Z]);
 get_key_from_command([[X|Y]|Z]) when is_bitstring(X) ->
     get_key_from_command([[bitstring_to_list(X)|Y]|Z]);
 get_key_from_command([[X|Y]|Z]) when is_list(X) ->
@@ -381,8 +389,16 @@ get_key_from_command([[X|Y]|Z]) when is_list(X) ->
         _ ->
             get_key_from_command([X|Y])
     end;
+get_key_from_command([Term1,Term2|Rest]) when is_integer(Term1) ->
+    get_key_from_command([integer_to_list(Term1),Term2|Rest]);
+get_key_from_command([Term1,Term2|Rest]) when is_float(Term1) ->
+    get_key_from_command([float_to_list(Term1),Term2|Rest]);
 get_key_from_command([Term1,Term2|Rest]) when is_bitstring(Term1) ->
     get_key_from_command([bitstring_to_list(Term1),Term2|Rest]);
+get_key_from_command([Term1,Term2|Rest]) when is_integer(Term2) ->
+    get_key_from_command([Term1,integer_to_list(Term2)|Rest]);
+get_key_from_command([Term1,Term2|Rest]) when is_float(Term2) ->
+    get_key_from_command([Term1,float_to_list(Term2)|Rest]);
 get_key_from_command([Term1,Term2|Rest]) when is_bitstring(Term2) ->
     get_key_from_command([Term1,bitstring_to_list(Term2)|Rest]);
 get_key_from_command([Term1,Term2|Rest]) ->
@@ -411,6 +427,10 @@ get_key_from_command(_) ->
 %% @end
 %% =============================================================================
 -spec get_key_from_rest([anystring()]) -> string() | undefined.
+get_key_from_rest([_,KeyName|_]) when is_integer(KeyName) ->
+    integer_to_list(KeyName);
+get_key_from_rest([_,KeyName|_]) when is_float(KeyName) ->
+    float_to_list(KeyName);
 get_key_from_rest([_,KeyName|_]) when is_bitstring(KeyName) ->
     bitstring_to_list(KeyName);
 get_key_from_rest([_,KeyName|_]) when is_list(KeyName) ->
