@@ -335,6 +335,8 @@ flushdb() ->
 -spec get_key_slot(Key::anystring()) -> Slot::integer().
 get_key_slot(Key) when is_bitstring(Key) ->
     get_key_slot(bitstring_to_list(Key));
+get_key_slot(Key) when is_integer(Key) ->
+    get_key_slot(integer_to_list(Key));
 get_key_slot(Key) ->
     KeyToBeHased = case string:chr(Key,${) of
         0 ->
