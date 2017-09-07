@@ -240,6 +240,8 @@ get_key_from_command([Term1,Term2|Rest]) ->
             undefined;
         "eval" ->
             get_key_from_rest(Rest);
+        "keys" ->
+            keys;
         "evalsha" ->
             get_key_from_rest(Rest);
         _ ->
@@ -280,6 +282,11 @@ query(State, Command) ->
     PoolKey = get_key_from_command(Command),
     query(State, Command, PoolKey).
 
+query(State, Command , keys) ->
+    KeysFromAll = qa(State,Command),
+    Resp = murge_multi_query_response(KeysFromAll),
+    {State, ok, Resp};
+
 query(State, _, undefined) ->
     {State, error, invalid_cluster_command};
 query(State, Command, PoolKey) ->
@@ -318,6 +325,20 @@ query(State, Transaction, Slot, Counter) ->
         Payload ->
             {State, ok, Payload}
     end.
+
+murge_multi_query_response(Response)->
+    murge_multi_query_response(Response,[]).
+murge_multi_query_response([], MurgeResp)->
+    MurgeResp;
+murge_multi_query_response([Head|Rest], MurgeResp)->
+    io:format("Multi Query :~p ~n",[Head]),
+    case Head of
+        {ok,Resp} ->
+            Murged = MurgeResp ++ Resp;
+        _Error ->
+            Murged = MurgeResp
+    end,
+    murge_multi_query_response(Rest,Murged).
 
 -spec throttle_retries(integer()) -> ok.
 throttle_retries(0) -> ok;
