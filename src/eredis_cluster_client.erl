@@ -347,12 +347,14 @@ throttle_retries(_) -> timer:sleep(?REDIS_RETRY_DELAY).
 %% @doc Return the hash slot from the key
 %% @end
 %% =============================================================================
--spec get_key_slot(Key::anystring()) -> Slot::integer().
-get_key_slot(Key) when is_bitstring(Key) ->
-    get_key_slot(bitstring_to_list(Key));
-get_key_slot(Key) when is_integer(Key) ->
-    get_key_slot(integer_to_list(Key));
-get_key_slot(Key) ->
+-spec get_key_slot(Key::any()) -> Slot::integer().
+%%get_key_slot(Key) when is_bitstring(Key) ->
+%%    get_key_slot(bitstring_to_list(Key));
+%%get_key_slot(Key) when is_integer(Key) ->
+%%    get_key_slot(integer_to_list(Key));
+get_key_slot(K) ->
+%%    cast any type of key to a list.
+    Key = lists:concat([K]),
     KeyToBeHased = case string:chr(Key,${) of
                        0 ->
                            Key;
