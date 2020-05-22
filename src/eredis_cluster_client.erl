@@ -383,6 +383,12 @@ qa(State, Command) ->
     Transaction = fun(Worker) -> qw(Worker, Command) end,
     [eredis_cluster_pool:transaction(Pool, Transaction) || Pool <- Pools].
 
+
+-spec qs(Pool :: atom(), redis_command()) -> redis_result().
+qs(Pool, Command) ->
+    Transaction = fun(Worker) -> qw(Worker, Command) end,
+    eredis_cluster_pool:transaction(Pool, Transaction).
+
 %% =============================================================================
 %% @doc Wrapper function to be used for direct call to a pool worker in the
 %% function passed to the transaction/2 method
@@ -420,6 +426,22 @@ handle_call({qp,Commands}, _From, State) ->
 handle_call({qk,Command, PoolKey}, _From, State) ->
     {NewState, Status, Resp} = query(State, Command, PoolKey),
     {reply, {Status,Resp}, NewState};
+
+handle_call({qa, Command}, _From, State) ->
+    Resp = qa(State, Command),
+    {reply, {ok, Resp}, State};
+
+handle_call({qs, Pool, Command}, _From, State) ->
+    Resp = qs(Pool, Command),
+    {reply, Resp, State};
+
+handle_call({qw, Worker, Command}, _From, State) ->
+    Resp = qw(Worker, Command),
+    {reply, Resp, State};
+
+handle_call({get_all_pools}, _From, State) ->
+    Pools = get_all_pools(State),
+    {reply, {ok, Pools}, State};
 
 handle_call({connect, InitServers}, _From, _State) ->
     {reply, ok, connect_(InitServers)};
