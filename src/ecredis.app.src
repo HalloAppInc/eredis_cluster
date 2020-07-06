@@ -1,5 +1,5 @@
-{application, eredis_cluster, [
-    {description, "Eredis Cluster"},
+{application, ecredis, [
+    {description, "Erlang Cluster Redis"},
     {vsn, "0.5.7"},
     {modules, []},
     {registered, []},
@@ -7,6 +7,6 @@
         kernel,
         stdlib
     ]},
-    {mod, {eredis_cluster, []}},
+    {mod, {ecredis, []}},
     {env, []}
 ]}.
