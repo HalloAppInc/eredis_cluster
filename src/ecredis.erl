@@ -102,7 +102,7 @@ reload_slots_map(State) ->
     NewState.
 
 -spec get_cluster_slots(ClusterName :: atom(), InitNodes :: [#node{}]) -> 
-    [[bitstring() | [bitstring()]]].
+    [[binary() | [binary()]]].
 get_cluster_slots(_ClusterName, []) ->
     throw({error, cannot_connect_to_cluster});
 get_cluster_slots(ClusterName, [Node|T]) ->
@@ -124,13 +124,13 @@ get_cluster_slots(ClusterName, [Node|T]) ->
   end.
 
 
--spec get_cluster_slots_from_single_node(#node{}) -> [[bitstring() | [bitstring()]]].
+-spec get_cluster_slots_from_single_node(#node{}) -> [[binary() | [binary()]]].
 get_cluster_slots_from_single_node(Node) ->
     [[<<"0">>, integer_to_binary(?REDIS_CLUSTER_HASH_SLOTS-1),
     [list_to_binary(Node#node.address), integer_to_binary(Node#node.port)]]].
 
 
--spec parse_cluster_slots([[bitstring() | [bitstring()]]]) -> [#slots_map{}].
+-spec parse_cluster_slots([[binary() | [binary()]]]) -> [#slots_map{}].
 parse_cluster_slots(ClusterInfo) ->
     parse_cluster_slots(ClusterInfo, 1, []).
 
@@ -274,8 +274,8 @@ throttle_retries(_) -> timer:sleep(?REDIS_RETRY_DELAY).
 %% @end
 %% =============================================================================
 -spec get_key_from_command(redis_command()) -> string() | undefined.
-get_key_from_command([[X|Y]|Z]) when is_bitstring(X) ->
-    get_key_from_command([[bitstring_to_list(X)|Y]|Z]);
+get_key_from_command([[X|Y]|Z]) when is_binary(X) ->
+    get_key_from_command([[binary_to_list(X)|Y]|Z]);
 get_key_from_command([[X|Y]|Z]) when is_list(X) ->
     case string:to_lower(X) of
         "multi" ->
@@ -283,10 +283,10 @@ get_key_from_command([[X|Y]|Z]) when is_list(X) ->
         _ ->
             get_key_from_command([X|Y])
     end;
-get_key_from_command([Term1,Term2|Rest]) when is_bitstring(Term1) ->
-    get_key_from_command([bitstring_to_list(Term1),Term2|Rest]);
-get_key_from_command([Term1,Term2|Rest]) when is_bitstring(Term2) ->
-    get_key_from_command([Term1,bitstring_to_list(Term2)|Rest]);
+get_key_from_command([Term1,Term2|Rest]) when is_binary(Term1) ->
+    get_key_from_command([binary_to_list(Term1),Term2|Rest]);
+get_key_from_command([Term1,Term2|Rest]) when is_binary(Term2) ->
+    get_key_from_command([Term1,binary_to_list(Term2)|Rest]);
 get_key_from_command([Term1,Term2|Rest]) ->
     case string:to_lower(Term1) of
         "info" ->
@@ -315,8 +315,8 @@ get_key_from_command(_) ->
 %% @end
 %% =============================================================================
 -spec get_key_from_rest([anystring()]) -> string() | undefined.
-get_key_from_rest([_,KeyName|_]) when is_bitstring(KeyName) ->
-    bitstring_to_list(KeyName);
+get_key_from_rest([_,KeyName|_]) when is_binary(KeyName) ->
+    binary_to_list(KeyName);
 get_key_from_rest([_,KeyName|_]) when is_list(KeyName) ->
     KeyName;
 get_key_from_rest(_) ->
