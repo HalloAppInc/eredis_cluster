@@ -29,7 +29,7 @@
 % API
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec start_link(ClusterNAme :: atom(), InitNodes :: [#node{}]) -> {ok, pid()}.
+-spec start_link(ClusterName :: atom(), InitNodes :: [#node{}]) -> {ok, pid()}.
 start_link(ClusterName, InitNodes) ->
     gen_server:start_link({local, ClusterName}, ?MODULE, [ClusterName, InitNodes], []).
 
@@ -158,7 +158,7 @@ connect_all_slots(ClusterName, SlotsMapList) ->
 
 -spec connect_node(ClusterName :: atom(), #node{}) -> ok.
 connect_node(ClusterName, Node) ->
-    %% Will connect if no connection already present.
+    %% Will make an attempt to connect if no connection already present.
     lookup_eredis_pid(ClusterName, Node),
     ok.
 
@@ -183,16 +183,15 @@ create_eredis_pids_cache(State, SlotsMaps) ->
 cache_eredis_pids(State, SlotsCache, SlotsMaps, Slot) ->
     RedisNodeIndex = element(Slot + 1, SlotsCache),
     SlotsMap = element(RedisNodeIndex, SlotsMaps),
-    NewPid = if
-        SlotsMap#slots_map.node =/= undefined ->
-            {ok, Pid} = lookup_eredis_pid(State#state.cluster_name,
-                                          SlotsMap#slots_map.node),
-            Pid;
-        true ->
-            undefined
+    Result = lookup_eredis_pid(State#state.cluster_name, SlotsMap#slots_map.node),
+    case Result of
+        {ok, Pid} -> 
+            ets:insert(ets_table_name(State#state.cluster_name, ?SLOT_PIDS),
+                       {Slot, {Pid, State#state.version}});
+        {error, _} ->
+             %% TODO(vipin): Maybe retry after sometime.
+             ok
     end,
-    ets:insert(ets_table_name(State#state.cluster_name, ?SLOT_PIDS),
-               {Slot, {NewPid, State#state.version}}),
     ok.
 
 
@@ -202,16 +201,23 @@ query(ClusterName, Command) ->
 
 
 query(_Cluster, Command, undefined) ->
+    error_logger:error_msg("Unable to execute: ~p, invalid cluster key~n", [Command]),
     {error, invalid_cluster_key, Command};
 query(ClusterName, Command, Key) ->
     Slot = get_key_slot(Key),
-    {Pid, Version} = get_eredis_pid(ClusterName, Slot),
-    query(ClusterName, Pid, Command, Slot, Version, 0).
+    execute_slot_query(ClusterName, Command, Slot, 0).
+
+execute_slot_query(ClusterName, Command, Slot, Counter) ->
+    case get_eredis_pid(ClusterName, Slot) of
+        undefined -> execute_query(ClusterName, undefined, Command, Slot, undefined, Counter);
+        {Pid, Version} -> execute_query(ClusterName, Pid, Command, Slot, Version, Counter)
+    end.
 
 
-query(_Cluster, undefined, _, _, _, ?REDIS_CLUSTER_REQUEST_TTL) ->
-    {error, no_connection};
-query(ClusterName, Pid, Command, Slot, Version, Counter) ->
+execute_query(_Cluster, undefined, Command, Slot, _, ?REDIS_CLUSTER_REQUEST_TTL) ->
+    error_logger:error_msg("Unable to execute: ~p, slot: ~p has no connection~n", [Command, Slot]),
+    {error, no_connection, Command};
+execute_query(ClusterName, Pid, Command, Slot, Version, Counter) ->
     %% Throttle retries
     throttle_retries(Counter),
 
@@ -220,21 +226,19 @@ query(ClusterName, Pid, Command, Slot, Version, Counter) ->
         % mapping.
         {error, no_connection} ->
             {ok, _} = remap_cluster(ClusterName, Version),
-            {NewPid, NewVersion} = get_eredis_pid(ClusterName, Slot), 
-            query(ClusterName, NewPid, Command, Slot, NewVersion, Counter + 1);
+            execute_slot_query(ClusterName, Command, Slot, Counter + 1);
 
         % If the tcp connection is closed (connection timeout), the redis worker
         % will try to reconnect, thus the connection should be recovered for
         % the next request. We don't need to refresh the slot mapping in this
         % case.
         {error, tcp_closed} ->
-            query(ClusterName, Pid, Command, Slot, Version, Counter + 1);
+            execute_query(ClusterName, Pid, Command, Slot, Version, Counter + 1);
 
         % Redis explicitly say our slot mapping is incorrect, we need to refresh it.
         {error, <<"MOVED ", _/binary>>} ->
             {ok, _} = remap_cluster(ClusterName, Version),
-            {NewPid, NewVersion} = get_eredis_pid(ClusterName, Slot), 
-            query(ClusterName, NewPid, Command, Slot, NewVersion, Counter + 1);
+            execute_slot_query(ClusterName, Command, Slot, Counter + 1);
 
         Result ->
             Result
@@ -358,16 +362,23 @@ create_ets_tables(ClusterName) ->
 %% Looks up existing redis client pid using Ip, Port and return Pid of the client
 %% connection. If no such connection is present, this method establishes the connection.
 -spec lookup_eredis_pid(ClusterName :: atom(), Node :: #node{}) ->
-    {ok, Pid :: pid()}.
+    {ok, Pid :: pid()} | {error, any()}.
 lookup_eredis_pid(ClusterName, Node) ->
     Res = ets:lookup(ets_table_name(ClusterName, ?NODE_PIDS),
                      [Node#node.address, Node#node.port]),  
     case Res of
         [] ->
-           {ok, Pid} = safe_eredis_start_link(Node#node.address, Node#node.port),
-           ets:insert(ets_table_name(ClusterName, ?NODE_PIDS),
-                      {[Node#node.address, Node#node.port], Pid}),
-          {ok, Pid};
+           Result = safe_eredis_start_link(Node#node.address, Node#node.port),
+           case Result of
+               {ok, Pid} -> 
+                   ets:insert(ets_table_name(ClusterName, ?NODE_PIDS),
+                              {[Node#node.address, Node#node.port], Pid}),
+                   {ok, Pid};
+               {error, Reason} ->
+                   error_logger:error_msg("Unable to connect with Redis Node: ~p:~p, Reason: ~p~n",
+                                          [Node#node.address, Node#node.port, Reason]),
+                   {error, Reason}
+            end;
         [{_, Pid}] -> {ok, Pid}
     end.
 
@@ -376,6 +387,10 @@ ets_table_name(ClusterName, Purpose) ->
 
 
 safe_eredis_start_link(Ip, Port) ->
+    %% eredis client's gen_server terminates if it is unable to connect with redis. We trap the
+    %% exit signal just so ecredis process also does not terminate. Returned error needs to be
+    %% handled by the caller.
+    %% Refer: https://medium.com/erlang-battleground/the-unstoppable-exception-9dfb009852f5
     process_flag(trap_exit, true),
     Payload = eredis:start_link(Ip, Port),
     process_flag(trap_exit, false),
