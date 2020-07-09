@@ -16,8 +16,7 @@
 
 -record(node, {
     address :: string(),
-    port :: integer(),
-    pool :: atom()
+    port :: integer()
 }).
 
 -record(slots_map, {

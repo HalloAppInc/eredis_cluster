@@ -1,20 +1,20 @@
 -module(ecredis).
 -behaviour(gen_server).
 
+%% To be used to name the ets tables.
+-define(NODE_PIDS, node_pids).
+-define(SLOT_PIDS, slot_pids).
+
 %% API.
--export([start_link/1,
+-export([start_link/2,
          remap_cluster/2,
          get_eredis_pid/2,
          qp/2,
-         q/2]).
+         q/2
+]).
 
 %% Callbacks for gen_server.
--export([init/1,
-         handle_call/3,
-         handle_cast/2,
-         handle_info/2,
-         terminate/2,
-         code_change/3]).
+-export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 %% Type definition.
 -include_lib("eunit/include/eunit.hrl").
@@ -22,8 +22,6 @@
 -record(state, {
     cluster_name :: string(),
     init_nodes :: [#node{}],
-    slots_cache :: tuple(), %% Tuple with all the Redis slots. Each element indexes into slots_maps.
-    slots_maps :: tuple(), %% Tuple with all the Redis nodes and Redis slots mapped on them.
     version :: integer()  %% Used to avoid unnecessary refresh of Redis slots.
 }).
 
@@ -31,16 +29,16 @@
 % API
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
--spec start_link([]) -> {ok, pid()}.
-start_link({ClusterName, Args}) ->
-    gen_server:start_link({local, ClusterName}, ?MODULE, [ClusterName, Args], []).
+-spec start_link(ClusterNAme :: atom(), InitNodes :: [#node{}]) -> {ok, pid()}.
+start_link(ClusterName, InitNodes) ->
+    gen_server:start_link({local, ClusterName}, ?MODULE, [ClusterName, InitNodes], []).
 
 
 %% Looks up eredis Pid for Slot.
--spec get_eredis_pid(ClusterName::atom(), Slot::integer()) -> 
-    {Pid::pid(), Version::integer()} | undefined.
+-spec get_eredis_pid(ClusterName :: atom(), Slot :: integer()) -> 
+    {Pid :: pid(), Version :: integer()} | undefined.
 get_eredis_pid(ClusterName, Slot) ->
-    Result = ets:lookup(ets_table_name(ClusterName), Slot),
+    Result = ets:lookup(ets_table_name(ClusterName, ?SLOT_PIDS), Slot),
     case Result of
         [] -> undefined;
         [{_, Result2}] -> Result2
@@ -48,20 +46,20 @@ get_eredis_pid(ClusterName, Slot) ->
 
 
 %% Remaps various redis slots.
--spec remap_cluster(ClusterName::atom(), Version::integer()) -> {Version::integer()}.
+-spec remap_cluster(ClusterName :: atom(), Version :: integer()) -> {Version :: integer()}.
 remap_cluster(ClusterName, Version) ->
     Result = gen_server:call(ClusterName, {remap_cluster, Version}),
     Result.
 
 
 %% Executes qp.
--spec qp(ClusterName::atom(), redis_pipeline_command()) -> redis_pipeline_result().
+-spec qp(ClusterName :: atom(), Commands :: redis_pipeline_command()) -> redis_pipeline_result().
 qp(ClusterName, Commands) ->
-    q(ClusterName, Commands).
+    query(ClusterName, Commands).
 
 
 %% Executes q.
--spec q(ClusterName::atom(), redis_command()) -> redis_result().
+-spec q(ClusterName :: atom(), Command :: redis_command()) -> redis_result().
 q(ClusterName, Command) ->
     query(ClusterName, Command).
 
@@ -71,20 +69,18 @@ q(ClusterName, Command) ->
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 
--spec connect_(State::#state{}, [{Address::string(), Port::integer()}]) -> #state{}.
-connect_(_State, []) ->
+-spec connect_all_nodes(State :: #state{}, InitNodes :: [#node{}]) -> #state{}.
+connect_all_nodes(_State, []) ->
     #state{};
-connect_(State, InitNodes) ->
+connect_all_nodes(State, InitNodes) ->
     NewState = State#state{
-        slots_cache = {},
-        slots_maps = {},
-        init_nodes = [#node{address = A, port = P} || {A,P} <- InitNodes],
+        init_nodes = InitNodes,
         version = 0
     },
     reload_slots_map(NewState).
 
 
--spec remap_cluster_internal(State::#state{}, Version::integer()) -> State::#state{}.
+-spec remap_cluster_internal(State :: #state{}, Version :: integer()) -> State :: #state{}.
 remap_cluster_internal(State, Version) ->
     if State#state.version == Version ->
         reload_slots_map(State);
@@ -94,38 +90,29 @@ remap_cluster_internal(State, Version) ->
 
 
 %% TODO(vipin): Need to reset connection on Redis node removal.
--spec reload_slots_map(State::#state{}) -> State::#state{}.
+-spec reload_slots_map(State :: #state{}) -> State :: #state{}.
 reload_slots_map(State) ->
     ClusterSlots = get_cluster_slots(State#state.cluster_name, State#state.init_nodes),
     SlotsMaps = parse_cluster_slots(ClusterSlots),
-    ConnectedSlotsMaps = connect_all_slots(State#state.cluster_name, SlotsMaps),
-    SlotsCache = create_slots_cache(ConnectedSlotsMaps),
-
+    connect_all_slots(State#state.cluster_name, SlotsMaps),
     NewState = State#state{
-        slots_cache = list_to_tuple(SlotsCache),
-        slots_maps = list_to_tuple(ConnectedSlotsMaps),
         version = State#state.version + 1
     },
-    [cache_eredis_pids(NewState, Slot) || Slot <- lists:seq(0, ?REDIS_CLUSTER_HASH_SLOTS - 1)],
+    create_eredis_pids_cache(NewState, SlotsMaps),
+    NewState.
 
-    %% Reset tuples not needed in the state.
-    NewState2 = NewState#state{
-      slots_cache = {},
-      slots_maps = {}
-    },
-    NewState2.
-
--spec get_cluster_slots(ClusterName::atom(), [#node{}]) -> [[bitstring() | [bitstring()]]].
+-spec get_cluster_slots(ClusterName :: atom(), InitNodes :: [#node{}]) -> 
+    [[bitstring() | [bitstring()]]].
 get_cluster_slots(_ClusterName, []) ->
-    throw({error,cannot_connect_to_cluster});
+    throw({error, cannot_connect_to_cluster});
 get_cluster_slots(ClusterName, [Node|T]) ->
-    Res = lookup_eredis_pid(ClusterName, Node#node.address, Node#node.port),
+    Res = lookup_eredis_pid(ClusterName, Node),
     case Res of
         {ok, Pid} ->
           case eredis:q(Pid, ["CLUSTER", "SLOTS"]) of
-            {error,<<"ERR unknown command 'CLUSTER'">>} ->
+            {error, <<"ERR unknown command 'CLUSTER'">>} ->
                 get_cluster_slots_from_single_node(Node);
-            {error,<<"ERR This instance has cluster support disabled">>} ->
+            {error, <<"ERR This instance has cluster support disabled">>} ->
                 get_cluster_slots_from_single_node(Node);
             {ok, ClusterInfo} ->
                 ClusterInfo;
@@ -163,47 +150,49 @@ parse_cluster_slots([], _Index, Acc) ->
     lists:reverse(Acc).
 
 
--spec connect_all_slots(ClusterName::atom(), [#slots_map{}]) -> [integer()].
+-spec connect_all_slots(ClusterName :: atom(), [#slots_map{}]) -> [integer()].
 connect_all_slots(ClusterName, SlotsMapList) ->
-    [SlotsMap#slots_map{node=connect_node(ClusterName, SlotsMap#slots_map.node)} ||
-     SlotsMap <- SlotsMapList].
+    [connect_node(ClusterName, SlotsMap#slots_map.node) || SlotsMap <- SlotsMapList],
+    ok.
 
 
--spec connect_node(ClusterName::atom(), #node{}) -> #node{} | undefined.
+-spec connect_node(ClusterName :: atom(), #node{}) -> ok.
 connect_node(ClusterName, Node) ->
-    Res = lookup_eredis_pid(ClusterName, Node#node.address, Node#node.port),
-    case Res of
-        {ok, _} -> Node;
-        _ -> undefined
-    end.
+    %% Will connect if no connection already present.
+    lookup_eredis_pid(ClusterName, Node),
+    ok.
 
 
-%% Creates tuple with one element per Redis slot. Each element maps the Redis slot to the Redis
-%% node index in SlotsMaps.
--spec create_slots_cache([#slots_map{}]) -> [integer()].
-create_slots_cache(SlotsMaps) ->
+%% Creates tuple with one element per Redis slot. Each element maps the Redis slot to its eredis
+%% Pid.
+-spec create_eredis_pids_cache(State :: #state{}, SlotsMaps :: [#slots_map{}]) -> ok.
+create_eredis_pids_cache(State, SlotsMaps) ->
   SlotsCache = [[{Index, SlotsMap#slots_map.index}
         || Index <- lists:seq(SlotsMap#slots_map.start_slot, SlotsMap#slots_map.end_slot)]
         || SlotsMap <- SlotsMaps],
   FlatSlotsCache = lists:flatten(SlotsCache),
   SortedSlotsCache = lists:sort(FlatSlotsCache),
-  [ Index || {_,Index} <- SortedSlotsCache].
+  SlotsCache2 = [Index || {_, Index} <- SortedSlotsCache],
+  [cache_eredis_pids(State, list_to_tuple(SlotsCache2), list_to_tuple(SlotsMaps), Slot) ||
+      Slot <- lists:seq(0, ?REDIS_CLUSTER_HASH_SLOTS - 1)],
+  ok.
 
 
--spec cache_eredis_pids(State::#state{}, Slot::integer()) -> ok.
-cache_eredis_pids(State, Slot) ->
-    RedisNodeIndex = element(Slot + 1, State#state.slots_cache),
-    SlotsMap = element(RedisNodeIndex, State#state.slots_maps),
+-spec cache_eredis_pids(State :: #state{}, SlotsCache :: [integer()], 
+                        SlotsMaps :: [#slots_map{}], Slot :: integer()) -> ok.
+cache_eredis_pids(State, SlotsCache, SlotsMaps, Slot) ->
+    RedisNodeIndex = element(Slot + 1, SlotsCache),
+    SlotsMap = element(RedisNodeIndex, SlotsMaps),
     NewPid = if
         SlotsMap#slots_map.node =/= undefined ->
             {ok, Pid} = lookup_eredis_pid(State#state.cluster_name,
-                                          SlotsMap#slots_map.node#node.address,
-                                          SlotsMap#slots_map.node#node.port),
+                                          SlotsMap#slots_map.node),
             Pid;
         true ->
             undefined
     end,
-    ets:insert(ets_table_name(State#state.cluster_name), {Slot, {NewPid, State#state.version}}),
+    ets:insert(ets_table_name(State#state.cluster_name, ?SLOT_PIDS),
+               {Slot, {NewPid, State#state.version}}),
     ok.
 
 
@@ -212,8 +201,8 @@ query(ClusterName, Command) ->
     query(ClusterName, Command, Key).
 
 
-query(_Cluster, _, undefined) ->
-    {error, invalid_cluster_key};
+query(_Cluster, Command, undefined) ->
+    {error, invalid_cluster_key, Command};
 query(ClusterName, Command, Key) ->
     Slot = get_key_slot(Key),
     {Pid, Version} = get_eredis_pid(ClusterName, Slot),
@@ -237,12 +226,11 @@ query(ClusterName, Pid, Command, Slot, Version, Counter) ->
         % If the tcp connection is closed (connection timeout), the redis worker
         % will try to reconnect, thus the connection should be recovered for
         % the next request. We don't need to refresh the slot mapping in this
-        % case
+        % case.
         {error, tcp_closed} ->
             query(ClusterName, Pid, Command, Slot, Version, Counter + 1);
 
-        % Redis explicitly say our slot mapping is incorrect, we need to refresh
-        % it
+        % Redis explicitly say our slot mapping is incorrect, we need to refresh it.
         {error, <<"MOVED ", _/binary>>} ->
             {ok, _} = remap_cluster(ClusterName, Version),
             {NewPid, NewVersion} = get_eredis_pid(ClusterName, Slot), 
@@ -308,7 +296,7 @@ get_key_from_command([Term1,Term2|Rest]) ->
         "eval" ->
             get_key_from_rest(Rest);
         "keys" ->
-            keys;
+            undefined;
         "evalsha" ->
             get_key_from_rest(Rest);
         _ ->
@@ -334,7 +322,7 @@ get_key_from_rest(_) ->
 %% @doc Return the hash slot from the key
 %% @end
 %% =============================================================================
--spec get_key_slot(Key::any()) -> Slot::integer().
+-spec get_key_slot(Key :: any()) -> Slot :: integer().
 get_key_slot(K) ->
     %% cast any type of key to a list.
     Key = lists:concat([K]),
@@ -361,24 +349,30 @@ get_key_slot(K) ->
 % To manage list of eredis connections
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-create_ets_table(ClusterName) ->
-    ets:new(ets_table_name(ClusterName), [protected, set, named_table, {read_concurrency, true}]).
+create_ets_tables(ClusterName) ->
+    ets:new(ets_table_name(ClusterName, ?NODE_PIDS),
+            [protected, set, named_table, {read_concurrency, true}]),
+    ets:new(ets_table_name(ClusterName, ?SLOT_PIDS),
+            [protected, set, named_table, {read_concurrency, true}]).
 
 %% Looks up existing redis client pid using Ip, Port and return Pid of the client
 %% connection. If no such connection is present, this method establishes the connection.
--spec lookup_eredis_pid(ClusterName::atom(), Ip::string(), Port::integer()) -> {ok, Pid::pid()}.
-lookup_eredis_pid(ClusterName, Ip, Port) ->
-    Res = ets:lookup(ets_table_name(ClusterName), [Ip, Port]),  
+-spec lookup_eredis_pid(ClusterName :: atom(), Node :: #node{}) ->
+    {ok, Pid :: pid()}.
+lookup_eredis_pid(ClusterName, Node) ->
+    Res = ets:lookup(ets_table_name(ClusterName, ?NODE_PIDS),
+                     [Node#node.address, Node#node.port]),  
     case Res of
         [] ->
-           {ok, Pid} = safe_eredis_start_link(Ip, Port),
-           ets:insert(ets_table_name(ClusterName), {[Ip, Port], Pid}),
+           {ok, Pid} = safe_eredis_start_link(Node#node.address, Node#node.port),
+           ets:insert(ets_table_name(ClusterName, ?NODE_PIDS),
+                      {[Node#node.address, Node#node.port], Pid}),
           {ok, Pid};
         [{_, Pid}] -> {ok, Pid}
     end.
 
-ets_table_name(ClusterName) ->
-    list_to_atom(atom_to_list(ClusterName) ++ atom_to_list(?MODULE)).
+ets_table_name(ClusterName, Purpose) ->
+    list_to_atom(atom_to_list(ClusterName) ++ atom_to_list(Purpose) ++ atom_to_list(?MODULE)).
 
 
 safe_eredis_start_link(Ip, Port) ->
@@ -397,8 +391,8 @@ init([ClusterName, InitNodes]) ->
     State = #state{
         cluster_name = ClusterName
     },
-    create_ets_table(ClusterName),
-    {ok, connect_(State, InitNodes)}.
+    create_ets_tables(ClusterName),
+    {ok, connect_all_nodes(State, InitNodes)}.
 
 
 handle_call({remap_cluster, Version}, _From, State) ->
@@ -418,3 +412,5 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+

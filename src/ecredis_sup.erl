@@ -7,6 +7,8 @@
 
 -export([stop/0]).
 
+-include("eredis_cluster.hrl").
+
 -spec start_link() -> {ok, pid()}.
 start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
@@ -14,8 +16,12 @@ start_link() ->
 -spec init([])
 	-> {ok, {{supervisor:strategy(), 1, 5}, [supervisor:child_spec()]}}.
 init([]) ->
-    Procs = [{ecredis_a, {ecredis, start_link, [{ecredis_a, [{"127.0.0.1",30001}]}]}, permanent, 5000, worker, [dynamic]},
-             {ecredis_b, {ecredis, start_link, [{ecredis_b, [{"127.0.0.1",30005}]}]}, permanent, 5000, worker, [dynamic]}],
+    Procs = [{ecredis_a, {ecredis, start_link, 
+                          [ecredis_a, [#node{address = "127.0.0.1", port = 30001}]]},
+              permanent, 5000, worker, [dynamic]},
+             {ecredis_b, {ecredis, start_link, 
+                          [ecredis_b, [#node{address = "127.0.0.1", port = 30005}]]},
+              permanent, 5000, worker, [dynamic]}],
     {ok, {{one_for_one, 1, 5}, Procs}}.
 
 -spec stop() -> ok.

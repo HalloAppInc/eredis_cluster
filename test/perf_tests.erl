@@ -49,8 +49,14 @@ perf_test1(N) ->
 
 perf_test2() ->
     ecredis_sup:start_link(),
-    N = 20,
-    perf_test1(N),
+    perf_test1(1),
+    perf_test1(2),
+    perf_test1(5),
+    perf_test1(10),
+    perf_test1(20),
+    perf_test1(50),
+    perf_test1(100),
+    perf_test1(200),
     ecredis_sup:stop(),
     true.
 
