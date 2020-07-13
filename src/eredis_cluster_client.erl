@@ -445,6 +445,11 @@ handle_call({get_all_pools}, _From, State) ->
 
 handle_call({connect, InitServers}, _From, _State) ->
     {reply, ok, connect_(InitServers)};
+
+handle_call(flushdb, _From, State) ->
+    Result = flushdb(State),
+    {reply, {ok, Result}, State};
+
 handle_call(_Request, _From, State) ->
     {reply, ignored, State}.
 
