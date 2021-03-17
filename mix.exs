@@ -18,7 +18,7 @@ defmodule EredisCluster.Mixfile do
   end
 
   defp deps do
-    [{:poolboy, "~> 1.5.1"},
+    [{:poolboy, "~> 1.5.2"},
       {:eredis, "~> 1.0.8"}]
   end
 
